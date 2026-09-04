@@ -1,0 +1,6 @@
+{
+  "name": "LectureScribe AI",
+  "description": "Study assistant that turns lecture recordings into structured, exportable notes with formulas, diagrams, and PDF export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

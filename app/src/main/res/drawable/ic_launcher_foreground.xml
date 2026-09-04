@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Subtle drop shadow -->
+    <path
+        android:fillColor="#33000000"
+        android:pathData="M32,32 L68,32 C71.3,32 74,34.7 74,38 L74,74 C74,77.3 71.3,80 68,80 L32,80 C28.7,80 26,77.3 26,74 L26,38 C26,34.7 28.7,32 32,32 Z" />
+
+    <!-- Notebook / Document base -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,30 L66,30 C69.3,30 72,32.7 72,36 L72,72 C72,75.3 69.3,78 66,78 L30,78 C26.7,78 24,75.3 24,72 L24,36 C24,32.7 26.7,30 30,30 Z" />
+
+    <!-- Notebook spine / accent stripe -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M24,36 C24,32.7 26.7,30 30,30 L35,30 L35,78 L30,78 C26.7,78 24,75.3 24,72 Z" />
+
+    <!-- Document text / formula lines -->
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M41,40 L65,40 C65.6,40 66,40.4 66,41 C66,41.6 65.6,42 65,42 L41,42 C40.4,42 40,41.6 40,41 C40,40.4 40.4,40 41,40 Z" />
+
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M41,46 L61,46 C61.6,46 62,46.4 62,47 C62,47.6 61.6,48 61,48 L41,48 C40.4,48 40,47.6 40,47 C40,46.4 40.4,46 41,46 Z" />
+
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M41,52 L57,52 C57.6,52 58,52.4 58,53 C58,53.6 57.6,54 57,54 L41,54 C40.4,54 40,53.6 40,53 C40,52.4 40.4,52 41,52 Z" />
+
+    <!-- Mini chart / diagram node graphic on document -->
+    <path
+        android:fillColor="#00B0FF"
+        android:pathData="M42,60 L50,60 L50,68 L42,68 Z" />
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M56,60 L64,60 L64,68 L56,68 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1A237E"
+        android:strokeWidth="1.5"
+        android:pathData="M50,64 L56,64" />
+
+    <!-- AI Sparkle / Star in top right -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M73,28 C73,33 77,36 82,36 C77,36 73,39 73,44 C73,39 69,36 64,36 C69,36 73,33 73,28 Z" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M78,43 C78,45.5 80,47 82.5,47 C80,47 78,48.5 78,51 C78,48.5 76,47 73.5,47 C76,47 78,45.5 78,43 Z" />
+</vector>
