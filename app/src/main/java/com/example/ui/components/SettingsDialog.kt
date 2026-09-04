@@ -65,7 +65,7 @@ fun SettingsDialog(
         text = {
             Column {
                 Text(
-                    text = "LectureScribe AI uses Gemini's multimodal video understanding (gemini-3.5-flash) to watch lectures, transcribe blackboard derivations into LaTeX, and recreate diagrams with Mermaid.js.",
+                    text = "LectureScribe AI uses Gemini's multimodal video understanding (gemini-3.6-flash & gemini-3.5-flash-lite) to analyze lectures, transcribe blackboard derivations into LaTeX, and recreate diagrams with Mermaid.js.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 18.sp

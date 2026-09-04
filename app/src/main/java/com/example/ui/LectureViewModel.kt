@@ -6,12 +6,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.db.AppDatabase
-import com.example.data.model.DiagramItem
-import com.example.data.model.FormulaItem
 import com.example.data.model.GeneratedLectureResult
 import com.example.data.model.LectureNote
 import com.example.data.model.SubjectSlot
-import com.example.data.model.TimestampMarker
 import com.example.data.repository.LectureRepository
 import com.example.service.GeminiLectureService
 import com.example.service.PdfExportService
@@ -36,6 +33,7 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
     private val repository = LectureRepository(db.subjectDao(), db.lectureDao())
     private val geminiService = GeminiLectureService(application)
     private val pdfExportService = PdfExportService(application)
+    private val prefs = application.getSharedPreferences("lecturescribe_prefs", Context.MODE_PRIVATE)
 
     val allSlots: StateFlow<List<SubjectSlot>> = repository.allSlots
         .stateIn(
@@ -68,13 +66,15 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 
-    private val _processingStatusText = MutableStateFlow("Watching the lecture…")
+    private val _processingStatusText = MutableStateFlow("Analyzing lecture recording…")
     val processingStatusText: StateFlow<String> = _processingStatusText.asStateFlow()
 
     private val _uiEventMessage = MutableSharedFlow<String>()
     val uiEventMessage: SharedFlow<String> = _uiEventMessage.asSharedFlow()
 
-    private val _customApiKey = MutableStateFlow("")
+    private val _customApiKey = MutableStateFlow(
+        prefs.getString("gemini_api_key", "") ?: ""
+    )
     val customApiKey: StateFlow<String> = _customApiKey.asStateFlow()
 
     init {
@@ -105,7 +105,9 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setCustomApiKey(key: String) {
-        _customApiKey.value = key.trim()
+        val trimmed = key.trim()
+        _customApiKey.value = trimmed
+        prefs.edit().putString("gemini_api_key", trimmed).apply()
     }
 
     fun createSlot(name: String, description: String = "", colorHex: String = "#1A237E") {
@@ -152,9 +154,7 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             _isProcessing.value = true
-            _processingStatusText.value = "Watching lecture video & analyzing audio stream…"
-            delay(1200)
-            _processingStatusText.value = "Extracting key concepts & mathematical formulas…"
+            _processingStatusText.value = "Fetching lecture details & stream metadata…"
 
             val result = geminiService.generateNotesForYouTube(
                 youtubeUrl = url,
@@ -163,33 +163,21 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
             )
 
             if (result.isSuccess) {
-                _processingStatusText.value = "Recreating diagrams with Mermaid.js & rendering LaTeX…"
-                delay(800)
+                _processingStatusText.value = "Formatting LaTeX derivations & Mermaid diagrams…"
+                delay(400)
                 val generated = result.getOrThrow()
                 val noteId = repository.addLectureNote(
                     slotId = slotId,
                     result = generated,
                     sourceType = "YOUTUBE",
                     sourceUri = url,
-                    durationFormatted = "38:40"
+                    durationFormatted = "Full Video"
                 )
                 _selectedLectureId.value = noteId
                 _uiEventMessage.emit("Notes generated for '${generated.title}'!")
             } else {
-                // Fallback to rich intelligent note generation so user experience is guaranteed smooth
-                val err = result.exceptionOrNull()?.message ?: "Unknown error"
-                _processingStatusText.value = "Synthesizing lecture outline…"
-                delay(1000)
-                val fallbackNotes = generateContextualDemoNotes(url, currentSlot.name)
-                val noteId = repository.addLectureNote(
-                    slotId = slotId,
-                    result = fallbackNotes,
-                    sourceType = "YOUTUBE",
-                    sourceUri = url,
-                    durationFormatted = "41:20"
-                )
-                _selectedLectureId.value = noteId
-                _uiEventMessage.emit("Notes generated from lecture stream! (Note: ${err.take(60)})")
+                val err = result.exceptionOrNull()?.message ?: "Failed to generate notes."
+                _uiEventMessage.emit(err)
             }
             _isProcessing.value = false
         }
@@ -200,9 +188,7 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             _isProcessing.value = true
-            _processingStatusText.value = "Sampling key visual frames & audio across recording…"
-            delay(1200)
-            _processingStatusText.value = "Extracting topic changes & formulas…"
+            _processingStatusText.value = "Sampling visual keyframes from lecture recording…"
 
             val result = geminiService.generateNotesForUploadedVideo(
                 videoUri = uri,
@@ -211,32 +197,21 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
             )
 
             if (result.isSuccess) {
-                _processingStatusText.value = "Recreating diagrams & verifying LaTeX syntax…"
-                delay(800)
+                _processingStatusText.value = "Verifying LaTeX formulas & diagram structures…"
+                delay(400)
                 val generated = result.getOrThrow()
                 val noteId = repository.addLectureNote(
                     slotId = slotId,
                     result = generated,
                     sourceType = "UPLOAD",
                     sourceUri = uri.toString(),
-                    durationFormatted = "45:15"
+                    durationFormatted = "Recording"
                 )
                 _selectedLectureId.value = noteId
                 _uiEventMessage.emit("Notes generated for '${generated.title}'!")
             } else {
-                val err = result.exceptionOrNull()?.message ?: "Extraction issue"
-                _processingStatusText.value = "Extracting chalkboard structures & notes…"
-                delay(1000)
-                val fallbackNotes = generateContextualDemoNotes(fileName, currentSlot.name)
-                val noteId = repository.addLectureNote(
-                    slotId = slotId,
-                    result = fallbackNotes,
-                    sourceType = "UPLOAD",
-                    sourceUri = uri.toString(),
-                    durationFormatted = "46:00"
-                )
-                _selectedLectureId.value = noteId
-                _uiEventMessage.emit("Notes extracted from video recording! (Note: ${err.take(60)})")
+                val err = result.exceptionOrNull()?.message ?: "Failed to analyze video."
+                _uiEventMessage.emit(err)
             }
             _isProcessing.value = false
         }
@@ -254,49 +229,5 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
                 onComplete(result)
             }
         }
-    }
-
-    private fun generateContextualDemoNotes(inputHint: String, subjectName: String): GeneratedLectureResult {
-        return GeneratedLectureResult(
-            title = "$subjectName: Advanced Foundations & Analysis",
-            summary = "Comprehensive lecture covering foundational principles, equilibrium states, and dynamic analytical modeling. The speaker highlighted theoretical models, rigorous mathematical proofs, and structural flowchart representations of multi-phase transformations.",
-            keyConcepts = listOf(
-                "Primary Equilibrium Law: Systems gravitate toward minimal energy states governed by entropy and enthalpy dynamics.",
-                "Rate-Limiting Intermediates: Multi-stage transformations are governed by high-barrier transition states.",
-                "Conservation Laws: Total flux and invariant parameters are conserved across spatial and temporal boundaries.",
-                "Perturbation & Stability: Small disturbances attenuate under negative feedback loops."
-            ),
-            formulas = listOf(
-                FormulaItem(
-                    name = "Dynamic Rate Equation",
-                    latex = "\\frac{d[X]}{dt} = k_1 [A]^m [B]^n - k_{-1} [X]",
-                    explanation = "Differential equation describing the rate of change of intermediate species X."
-                ),
-                FormulaItem(
-                    name = "Free Energy Transformation",
-                    latex = "\\Delta G = \\Delta G^{\\circ} + RT \\ln Q",
-                    explanation = "Relates standard Gibbs energy change to instantaneous reaction quotient Q."
-                )
-            ),
-            diagrams = listOf(
-                DiagramItem(
-                    label = "Process State Transition Cycle",
-                    timestamp = "12:30",
-                    description = "State machine cycle mapping progression from Initial State through Catalyzed Transition to Final Product.",
-                    diagramType = "cycle",
-                    mermaidCode = """graph TD
-    A[Initial State A] -->|Excitation Energy| B[Transition Complex B*]
-    B -->|Exothermic Relaxation| C[Stable Intermediate C]
-    C -->|Regeneration Cycle| A
-    style B fill:#FFF3E0,stroke:#E65100,stroke-width:2px"""
-                )
-            ),
-            timestamps = listOf(
-                TimestampMarker("00:00", "Introduction & Topic Review"),
-                TimestampMarker("12:30", "System Dynamics & State Transition Cycle"),
-                TimestampMarker("24:15", "Quantitative Formula Derivations"),
-                TimestampMarker("37:40", "Summary & Problem Solutions")
-            )
-        )
     }
 }

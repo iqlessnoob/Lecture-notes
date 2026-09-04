@@ -250,11 +250,11 @@ fun AddLectureSection(
                                 color = MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier
                                     .clickable {
-                                        youtubeUrlInput = "https://www.youtube.com/watch?v=mit_ocw_lecture_04"
+                                        youtubeUrlInput = "https://www.youtube.com/watch?v=fNk_zzaMoSs"
                                     }
                             ) {
                                 Text(
-                                    text = "MIT OCW Lecture",
+                                    text = "3Blue1Brown Vectors",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -266,11 +266,11 @@ fun AddLectureSection(
                                 color = MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier
                                     .clickable {
-                                        youtubeUrlInput = "https://www.youtube.com/watch?v=stanford_chem_react"
+                                        youtubeUrlInput = "https://www.youtube.com/watch?v=WUvTyaaNkzM"
                                     }
                             ) {
                                 Text(
-                                    text = "Stanford Seminar",
+                                    text = "Essence of Calculus",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)

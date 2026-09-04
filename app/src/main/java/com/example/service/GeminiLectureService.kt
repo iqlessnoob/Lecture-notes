@@ -2,6 +2,7 @@ package com.example.service
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Base64
@@ -19,6 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 class GeminiLectureService(private val context: Context) {
@@ -30,30 +32,41 @@ class GeminiLectureService(private val context: Context) {
         .build()
 
     private val systemInstructionText = """
-        You are a study-notes assistant. You are given a lecture video or lecture reference. Watch, listen, and analyze the entire lecture, then produce structured study notes as JSON matching this schema:
+        You are an elite academic study-notes assistant. You are given a lecture video recording, visual keyframes, or a lecture reference.
+        Carefully analyze the lecture topic, instructor presentation, slide diagrams, and derivations, then produce comprehensive, highly structured study notes strictly formatted as JSON matching this schema:
 
         {
-          "title": "string - inferred lecture topic",
-          "summary": "string - 3-5 sentence overview",
-          "key_concepts": ["string", ...],
+          "title": "string - inferred or specific lecture topic",
+          "summary": "string - 3-5 sentence rigorous conceptual overview",
+          "key_concepts": [
+            "string - key concept with bold definition and explanation"
+          ],
           "formulas": [
-            { "name": "string", "latex": "string - formula in LaTeX", "explanation": "string" }
+            {
+              "name": "string - formula name",
+              "latex": "string - formula in standard LaTeX without wrapping dollars, e.g. \\Delta G = \\Delta H - T\\Delta S",
+              "explanation": "string - meaning of variables and conceptual significance"
+            }
           ],
           "diagrams": [
             {
               "label": "string - what the diagram represents",
-              "timestamp": "MM:SS - where it appears in the video",
-              "description": "string - detailed description of every element, label, and connection/arrow shown",
-              "diagram_type": "flowchart | cycle | labeled_diagram | graph | hierarchy | other",
-              "mermaid_code": "string - a Mermaid.js recreation of the diagram if it is a flowchart, cycle, hierarchy, or process diagram. Omit if not applicable."
+              "timestamp": "MM:SS - timestamp in the lecture",
+              "description": "string - detailed description of all entities, arrows, states, or components",
+              "diagram_type": "flowchart | cycle | graph | hierarchy | other",
+              "mermaid_code": "string - clean Mermaid.js diagram definition (e.g. graph TD\n A --> B). Omit if not applicable."
             }
           ],
           "timestamps": [
-            { "time": "MM:SS", "topic": "string - what starts being discussed here" }
+            { "time": "MM:SS", "topic": "string - what begins being taught or derived at this timestamp" }
           ]
         }
 
-        Be precise with formulas — use correct LaTeX syntax (e.g. \\Delta G = \\Delta H - T\\Delta S, \\int_a^b f(x)dx). For diagrams, capture every label and connection so the recreation is faithful, not a vague paraphrase. Provide clean Mermaid syntax for flowcharts/cycles/hierarchies. If the lecture has no diagrams or no formulas, return empty arrays for those fields rather than omitting them. Output ONLY valid JSON matching the schema.
+        Requirements:
+        1. Formulas: Provide accurate, readable LaTeX expressions.
+        2. Diagrams: Recreate actual procedural cycles, flowcharts, or system hierarchies with valid Mermaid.js code.
+        3. Notes must be entirely relevant and specific to the requested lecture topic and frames.
+        4. Output ONLY valid JSON matching this schema.
     """.trimIndent()
 
     suspend fun generateNotesForYouTube(
@@ -64,13 +77,34 @@ class GeminiLectureService(private val context: Context) {
         val apiKey = getActiveApiKey(customApiKey)
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
             return@withContext Result.failure(
-                IllegalStateException("Gemini API key is not configured. Please add your API key in settings or provide one.")
+                IllegalStateException("Gemini API key is not configured. Please configure your API key in settings.")
             )
         }
 
-        val prompt = "Lecture video URL: $youtubeUrl\nSubject Course: $subjectSlotName\nPlease watch and analyze this lecture recording, extract all core concepts, formulas in LaTeX, recreated diagrams with Mermaid.js code, and topic timestamps as defined in your instructions."
+        // Fetch real YouTube metadata (video title, creator, thumbnail) via oEmbed
+        val meta = fetchYouTubeMetadata(youtubeUrl)
+        val videoTitle = meta?.first ?: ""
+        val authorName = meta?.second ?: ""
+        val thumbnailUrl = meta?.third ?: ""
 
-        callGeminiApi(apiKey, prompt, emptyList())
+        val frames = mutableListOf<Bitmap>()
+        if (thumbnailUrl.isNotBlank()) {
+            fetchThumbnailBitmap(thumbnailUrl)?.let { frames.add(it) }
+        }
+
+        val prompt = buildString {
+            appendLine("Subject / Course: $subjectSlotName")
+            if (videoTitle.isNotBlank()) {
+                appendLine("Lecture Video Title: $videoTitle")
+            }
+            if (authorName.isNotBlank()) {
+                appendLine("Instructor / Channel: $authorName")
+            }
+            appendLine("Video URL: $youtubeUrl")
+            appendLine("Please analyze this lecture. Extract and synthesize deep, topic-specific study notes with core conceptual breakdowns, mathematical formulas in LaTeX, structural diagram recreations in Mermaid.js, and topic timestamps.")
+        }
+
+        callGeminiApi(apiKey, prompt, frames)
     }
 
     suspend fun generateNotesForUploadedVideo(
@@ -81,51 +115,19 @@ class GeminiLectureService(private val context: Context) {
         val apiKey = getActiveApiKey(customApiKey)
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
             return@withContext Result.failure(
-                IllegalStateException("Gemini API key is not configured. Please add your API key in settings or provide one.")
+                IllegalStateException("Gemini API key is not configured. Please configure your API key in settings.")
             )
         }
 
         val frames = extractSampleFrames(videoUri, frameCount = 4)
-        val prompt = "Subject Course: $subjectSlotName\nHere are sequential key visual frames sampled across this lecture recording. Generate comprehensive structured study notes containing summary, key concepts, formulas in proper LaTeX, recreated diagrams with Mermaid.js syntax, and topic timestamps."
+        val prompt = buildString {
+            appendLine("Subject / Course: $subjectSlotName")
+            appendLine("Here are sequential visual keyframes sampled across the uploaded lecture video recording.")
+            appendLine("Inspect the chalkboard, slides, whiteboard notes, and diagrams visible in these frames.")
+            appendLine("Produce comprehensive structured study notes containing summary, key concepts, formulas in proper LaTeX, recreated diagrams with Mermaid.js syntax, and topic timestamps.")
+        }
 
         callGeminiApi(apiKey, prompt, frames)
-    }
-
-    suspend fun processInTwoHalvesAndMerge(
-        sourceDesc: String,
-        subjectSlotName: String,
-        customApiKey: String? = null
-    ): Result<GeneratedLectureResult> = withContext(Dispatchers.IO) {
-        val apiKey = getActiveApiKey(customApiKey)
-        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
-            return@withContext Result.failure(
-                IllegalStateException("Gemini API key is not configured.")
-            )
-        }
-
-        val promptPart1 = "Lecture: $sourceDesc (Course: $subjectSlotName) - Processing Part 1 (First Half, 0:00 to 30:00). Extract notes, formulas, diagrams."
-        val promptPart2 = "Lecture: $sourceDesc (Course: $subjectSlotName) - Processing Part 2 (Second Half, 30:00 to 60:00). Extract notes, formulas, diagrams."
-
-        val res1 = callGeminiApi(apiKey, promptPart1, emptyList())
-        val res2 = callGeminiApi(apiKey, promptPart2, emptyList())
-
-        if (res1.isSuccess && res2.isSuccess) {
-            val r1 = res1.getOrThrow()
-            val r2 = res2.getOrThrow()
-            val merged = GeneratedLectureResult(
-                title = r1.title.ifBlank { r2.title },
-                summary = "${r1.summary} ${r2.summary}",
-                keyConcepts = (r1.keyConcepts + r2.keyConcepts).distinct(),
-                formulas = (r1.formulas + r2.formulas).distinctBy { it.name },
-                diagrams = (r1.diagrams + r2.diagrams).distinctBy { it.label },
-                timestamps = r1.timestamps + r2.timestamps
-            )
-            Result.success(merged)
-        } else if (res1.isSuccess) {
-            res1
-        } else {
-            res2
-        }
     }
 
     private fun callGeminiApi(
@@ -133,49 +135,59 @@ class GeminiLectureService(private val context: Context) {
         prompt: String,
         frames: List<Bitmap>
     ): Result<GeneratedLectureResult> {
+        // Preferred modern models: gemini-3.6-flash, with fallback to gemini-3.5-flash-lite if 503 or transient error occurs
+        val models = listOf("gemini-3.6-flash", "gemini-3.5-flash-lite")
+        var lastError: Exception? = null
+
+        for (model in models) {
+            val result = executeGeminiRequest(apiKey, model, prompt, frames)
+            if (result.isSuccess) {
+                return result
+            } else {
+                lastError = result.exceptionOrNull() as? Exception
+                val msg = lastError?.message.orEmpty()
+                // Retry with next model on 503 (high demand), 429 (rate limit), or 404 (model unavailable)
+                if (msg.contains("503") || msg.contains("UNAVAILABLE") || msg.contains("429") || msg.contains("404")) {
+                    continue
+                } else {
+                    return result
+                }
+            }
+        }
+        return Result.failure(lastError ?: Exception("Failed to generate notes with Gemini API"))
+    }
+
+    private fun executeGeminiRequest(
+        apiKey: String,
+        modelName: String,
+        prompt: String,
+        frames: List<Bitmap>
+    ): Result<GeneratedLectureResult> {
         return try {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
 
             val partsArray = JSONArray()
+            partsArray.put(JSONObject().put("text", prompt))
 
-            // Text prompt part
-            val textPart = JSONObject()
-            textPart.put("text", prompt)
-            partsArray.put(textPart)
-
-            // Image frame parts
+            // Add image frames if available
             for (frame in frames) {
                 val base64 = bitmapToBase64(frame)
                 if (base64.isNotEmpty()) {
                     val inlineData = JSONObject()
                     inlineData.put("mimeType", "image/jpeg")
                     inlineData.put("data", base64)
-
-                    val imgPart = JSONObject()
-                    imgPart.put("inlineData", inlineData)
-                    partsArray.put(imgPart)
+                    partsArray.put(JSONObject().put("inlineData", inlineData))
                 }
             }
 
-            val contentsArray = JSONArray()
-            val contentObj = JSONObject()
-            contentObj.put("parts", partsArray)
-            contentsArray.put(contentObj)
-
-            // System instruction
+            val contentsArray = JSONArray().put(JSONObject().put("parts", partsArray))
             val sysParts = JSONArray().put(JSONObject().put("text", systemInstructionText))
             val sysInstructionObj = JSONObject().put("parts", sysParts)
 
-            // Generation config with JSON response format
             val genConfig = JSONObject()
             genConfig.put("temperature", 0.2)
             genConfig.put("topP", 0.95)
-
-            val responseFormat = JSONObject()
-            val responseFormatText = JSONObject()
-            responseFormatText.put("mimeType", "application/json")
-            responseFormat.put("text", responseFormatText)
-            genConfig.put("responseFormat", responseFormat)
+            genConfig.put("responseMimeType", "application/json")
 
             val rootJson = JSONObject()
             rootJson.put("contents", contentsArray)
@@ -191,16 +203,50 @@ class GeminiLectureService(private val context: Context) {
                 .build()
 
             val response = okHttpClient.newCall(request).execute()
+            val respBodyStr = response.body?.string() ?: ""
+
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string() ?: "Unknown error"
-                return Result.failure(Exception("Gemini API error ${response.code}: $errorBody"))
+                return Result.failure(Exception("Gemini API ($modelName) error ${response.code}: $respBodyStr"))
             }
 
-            val respBodyStr = response.body?.string() ?: ""
             val parsedResult = parseGeminiResponse(respBodyStr)
             Result.success(parsedResult)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    private fun fetchYouTubeMetadata(youtubeUrl: String): Triple<String, String, String>? {
+        return try {
+            val encoded = URLEncoder.encode(youtubeUrl, "UTF-8")
+            val req = Request.Builder()
+                .url("https://www.youtube.com/oembed?url=$encoded&format=json")
+                .build()
+            val resp = okHttpClient.newCall(req).execute()
+            if (resp.isSuccessful) {
+                val body = resp.body?.string() ?: return null
+                val json = JSONObject(body)
+                val title = json.optString("title", "")
+                val author = json.optString("author_name", "")
+                val thumbnail = json.optString("thumbnail_url", "")
+                Triple(title, author, thumbnail)
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fetchThumbnailBitmap(thumbnailUrl: String): Bitmap? {
+        return try {
+            val req = Request.Builder().url(thumbnailUrl).build()
+            val resp = okHttpClient.newCall(req).execute()
+            if (resp.isSuccessful) {
+                val bytes = resp.body?.bytes() ?: return null
+                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                scaleBitmap(bmp, maxDimension = 640)
+            } else null
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -284,21 +330,27 @@ class GeminiLectureService(private val context: Context) {
 
     private fun cleanJsonString(input: String): String {
         var str = input.trim()
-        if (str.startsWith("```json")) {
-            str = str.removePrefix("```json")
-        } else if (str.startsWith("```")) {
-            str = str.removePrefix("```")
+        val jsonStart = str.indexOf('{')
+        val jsonEnd = str.lastIndexOf('}')
+        if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart) {
+            return str.substring(jsonStart, jsonEnd + 1)
         }
-        if (str.endsWith("```")) {
-            str = str.removeSuffix("```")
-        }
-        return str.trim()
+        return str
     }
 
     fun extractFrameAtTimestamp(videoUri: Uri, timestamp: String): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {
-            retriever.setDataSource(context, videoUri)
+            try {
+                val pfd = context.contentResolver.openFileDescriptor(videoUri, "r")
+                if (pfd != null) {
+                    retriever.setDataSource(pfd.fileDescriptor)
+                } else {
+                    retriever.setDataSource(context, videoUri)
+                }
+            } catch (_: Exception) {
+                retriever.setDataSource(context, videoUri)
+            }
             val seconds = parseTimestampToSeconds(timestamp)
             val timeUs = seconds * 1_000_000L
             retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
@@ -315,7 +367,19 @@ class GeminiLectureService(private val context: Context) {
         val bitmaps = mutableListOf<Bitmap>()
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(context, videoUri)
+            var setSuccess = false
+            try {
+                val pfd = context.contentResolver.openFileDescriptor(videoUri, "r")
+                if (pfd != null) {
+                    retriever.setDataSource(pfd.fileDescriptor)
+                    setSuccess = true
+                }
+            } catch (_: Exception) {}
+
+            if (!setSuccess) {
+                retriever.setDataSource(context, videoUri)
+            }
+
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val durationMs = durationStr?.toLongOrNull() ?: 60000L
             val step = durationMs / (frameCount + 1)
@@ -379,6 +443,12 @@ class GeminiLectureService(private val context: Context) {
 
     private fun getActiveApiKey(customKey: String?): String {
         if (!customKey.isNullOrBlank()) return customKey.trim()
+
+        val prefsKey = context.getSharedPreferences("lecturescribe_prefs", Context.MODE_PRIVATE)
+            .getString("gemini_api_key", "")
+            ?.trim()
+        if (!prefsKey.isNullOrBlank()) return prefsKey
+
         val buildKey = BuildConfig.GEMINI_API_KEY
         if (buildKey.isNotBlank() && buildKey != "MY_GEMINI_API_KEY") {
             return buildKey
