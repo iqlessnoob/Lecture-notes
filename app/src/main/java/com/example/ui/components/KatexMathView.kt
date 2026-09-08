@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.model.FormulaItem
+import com.example.util.LatexToHumanConverter
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -141,6 +143,10 @@ fun KatexFormulaCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            val humanReadableEquation = remember(formula.latex) {
+                LatexToHumanConverter.convert(formula.latex)
+            }
+
             // Mathematical Display Box
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -149,25 +155,58 @@ fun KatexFormulaCard(
                 tonalElevation = 1.dp
             ) {
                 if (showRawLatex) {
-                    Text(
-                        text = formula.latex,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(14.dp)
-                    )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "LaTeX Source:",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = formula.latex,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 } else {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(72.dp)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        KaTeXWebView(
-                            latex = formula.latex,
-                            isDarkTheme = isDark
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(68.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            KaTeXWebView(
+                                latex = formula.latex,
+                                isDarkTheme = isDark
+                            )
+                        }
+
+                        if (humanReadableEquation.isNotBlank()) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Human notation:  $humanReadableEquation",
+                                    fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     }
                 }
             }

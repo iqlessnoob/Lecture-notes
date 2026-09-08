@@ -80,7 +80,7 @@ fun MermaidDiagramCard(
     var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isCapturingFrame by remember { mutableStateOf(false) }
 
-    // Attempt video frame capture if source is uploaded video
+    // Attempt video frame capture if source is uploaded video or YouTube
     LaunchedEffect(sourceUri, diagram.timestamp) {
         if (sourceType == "UPLOAD" && sourceUri.isNotBlank()) {
             isCapturingFrame = true
@@ -89,6 +89,19 @@ fun MermaidDiagramCard(
                     val service = GeminiLectureService(context)
                     val uri = Uri.parse(sourceUri)
                     capturedBitmap = service.extractFrameAtTimestamp(uri, diagram.timestamp)
+                } catch (_: Exception) {}
+            }
+            isCapturingFrame = false
+        } else if (sourceType == "YOUTUBE" && sourceUri.isNotBlank()) {
+            isCapturingFrame = true
+            withContext(Dispatchers.IO) {
+                try {
+                    val service = GeminiLectureService(context)
+                    val thumbUrl = service.getYouTubeThumbnailUrl(sourceUri)
+                    if (!thumbUrl.isNullOrBlank()) {
+                        val stream = java.net.URL(thumbUrl).openStream()
+                        capturedBitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                    }
                 } catch (_: Exception) {}
             }
             isCapturingFrame = false

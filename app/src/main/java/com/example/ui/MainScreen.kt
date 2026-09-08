@@ -288,7 +288,8 @@ fun MainScreen(
                             onDeleteLecture = { lectureId -> viewModel.deleteLecture(lectureId) },
                             onExportPdf = { ctx, s, l, cb ->
                                 viewModel.exportPdf(ctx, s, l, cb)
-                            }
+                            },
+                            viewModel = viewModel
                         )
                     }
                 } else if (currentSlot != null) {

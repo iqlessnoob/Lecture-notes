@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.CheckCircle
@@ -60,9 +61,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.LectureNote
 import com.example.data.model.SubjectSlot
 import com.example.service.PdfExportService
+import com.example.ui.LectureViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,6 +77,7 @@ fun LectureDetailView(
     onBack: () -> Unit,
     onDeleteLecture: (Long) -> Unit,
     onExportPdf: (Context, SubjectSlot, LectureNote, (Result<PdfExportService.ExportResult>) -> Unit) -> Unit,
+    viewModel: LectureViewModel? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -81,6 +85,11 @@ fun LectureDetailView(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var exportSuccessMessage by remember { mutableStateOf<String?>(null) }
     var lastExportedIntent by remember { mutableStateOf<Intent?>(null) }
+
+    val chatMessages by (viewModel?.getChatMessagesForLecture(lecture.id) ?: kotlinx.coroutines.flow.flowOf(emptyList()))
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val isAiAnsweringChat by (viewModel?.isAiAnsweringChat ?: kotlinx.coroutines.flow.MutableStateFlow(false))
+        .collectAsStateWithLifecycle()
 
     val formattedDate = remember(lecture.createdAt) {
         SimpleDateFormat("MMM dd, yyyy • hh:mm a", Locale.getDefault()).format(Date(lecture.createdAt))
@@ -375,8 +384,10 @@ fun LectureDetailView(
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // SECTION 3: Formulas
-        val formulas = lecture.getFormulas()
+        // SECTION 3: Formulas (Rendered only if present in video)
+        val formulas = remember(lecture.formulasJson) {
+            lecture.getFormulas().filter { it.latex.isNotBlank() && it.name.isNotBlank() }
+        }
         if (formulas.isNotEmpty()) {
             SectionHeading(
                 title = "Formulas & Equations",
@@ -390,8 +401,10 @@ fun LectureDetailView(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // SECTION 4: Recreated Diagrams
-        val diagrams = lecture.getDiagrams()
+        // SECTION 4: Recreated Diagrams (Rendered only if present in video)
+        val diagrams = remember(lecture.diagramsJson) {
+            lecture.getDiagrams().filter { it.label.isNotBlank() && (it.description.isNotBlank() || it.mermaidCode.isNotBlank()) }
+        }
         if (diagrams.isNotEmpty()) {
             SectionHeading(
                 title = "Recreated Diagrams",
@@ -464,6 +477,26 @@ fun LectureDetailView(
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
+
+        // SECTION 6: Interactive Video Q&A Chat Box
+        SectionHeading(
+            title = "Ask Questions About Video",
+            badge = "Interactive Tutor",
+            icon = Icons.AutoMirrored.Filled.Chat
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        LectureChatCard(
+            lecture = lecture,
+            chatMessages = chatMessages,
+            isAiAnswering = isAiAnsweringChat,
+            onSendMessage = { question ->
+                viewModel?.sendLectureChatMessage(lecture, question)
+            },
+            onClearHistory = {
+                viewModel?.clearLectureChat(lecture.id)
+            }
+        )
+        Spacer(modifier = Modifier.height(20.dp))
 
         // Bottom PDF Export Action Card
         Card(

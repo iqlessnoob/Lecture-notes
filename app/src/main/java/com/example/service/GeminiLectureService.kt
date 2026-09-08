@@ -10,6 +10,8 @@ import com.example.BuildConfig
 import com.example.data.model.DiagramItem
 import com.example.data.model.FormulaItem
 import com.example.data.model.GeneratedLectureResult
+import com.example.data.model.LectureChatMessage
+import com.example.data.model.LectureNote
 import com.example.data.model.TimestampMarker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,7 +56,7 @@ class GeminiLectureService(private val context: Context) {
               "timestamp": "MM:SS - timestamp in the lecture",
               "description": "string - detailed description of all entities, arrows, states, or components",
               "diagram_type": "flowchart | cycle | graph | hierarchy | other",
-              "mermaid_code": "string - clean Mermaid.js diagram definition (e.g. graph TD\n A --> B). Omit if not applicable."
+              "mermaid_code": "string - clean Mermaid.js diagram definition (e.g. graph TD\n A --> B)"
             }
           ],
           "timestamps": [
@@ -62,10 +64,10 @@ class GeminiLectureService(private val context: Context) {
           ]
         }
 
-        Requirements:
-        1. Formulas: Provide accurate, readable LaTeX expressions.
-        2. Diagrams: Recreate actual procedural cycles, flowcharts, or system hierarchies with valid Mermaid.js code.
-        3. Notes must be entirely relevant and specific to the requested lecture topic and frames.
+        CRITICAL ACCURACY & GROUNDING RULES:
+        1. FORMULAS: ONLY include formulas in the "formulas" array IF mathematical formulas, quantitative equations, laws, or algebraic derivations are ACTUALLY taught, written on the board/slides, or derived in the video. If the video has NO mathematical formulas (e.g., conceptual, historical, literature, descriptive biology), you MUST return an EMPTY array: "formulas": []. STRICTLY DO NOT invent or assume formulas.
+        2. FLOWCHARTS & DIAGRAMS: ONLY include items in the "diagrams" array IF actual visual flowcharts, process cycles, architectural diagrams, circuit diagrams, graphs, or structured whiteboard drawings are ACTUALLY present or discussed in the lecture. If the video does NOT contain any flowcharts or diagrams, you MUST return an EMPTY array: "diagrams": []. STRICTLY DO NOT invent diagrams or flowcharts.
+        3. When diagrams ARE present in the video, recreate them faithfully with comprehensive Mermaid.js code representing every node, stage, and arrow.
         4. Output ONLY valid JSON matching this schema.
     """.trimIndent()
 
@@ -277,13 +279,17 @@ class GeminiLectureService(private val context: Context) {
         if (fArray != null) {
             for (i in 0 until fArray.length()) {
                 val item = fArray.optJSONObject(i) ?: continue
-                formulas.add(
-                    FormulaItem(
-                        name = item.optString("name", "Formula ${i + 1}"),
-                        latex = item.optString("latex", ""),
-                        explanation = item.optString("explanation", "")
+                val name = item.optString("name", "").trim()
+                val latex = item.optString("latex", "").trim()
+                if (latex.isNotBlank() && name.isNotBlank() && !latex.equals("none", ignoreCase = true)) {
+                    formulas.add(
+                        FormulaItem(
+                            name = name,
+                            latex = latex,
+                            explanation = item.optString("explanation", "").trim()
+                        )
                     )
-                )
+                }
             }
         }
 
@@ -292,15 +298,20 @@ class GeminiLectureService(private val context: Context) {
         if (dArray != null) {
             for (i in 0 until dArray.length()) {
                 val item = dArray.optJSONObject(i) ?: continue
-                diagrams.add(
-                    DiagramItem(
-                        label = item.optString("label", "Diagram ${i + 1}"),
-                        timestamp = item.optString("timestamp", "00:00"),
-                        description = item.optString("description", ""),
-                        diagramType = item.optString("diagram_type", "flowchart"),
-                        mermaidCode = item.optString("mermaid_code", "")
+                val label = item.optString("label", "").trim()
+                val desc = item.optString("description", "").trim()
+                val mermaid = item.optString("mermaid_code", "").trim()
+                if (label.isNotBlank() && (desc.isNotBlank() || mermaid.isNotBlank()) && !label.equals("none", ignoreCase = true)) {
+                    diagrams.add(
+                        DiagramItem(
+                            label = label,
+                            timestamp = item.optString("timestamp", "00:00").trim(),
+                            description = desc,
+                            diagramType = item.optString("diagram_type", "flowchart").trim(),
+                            mermaidCode = mermaid
+                        )
                     )
-                )
+                }
             }
         }
 
@@ -439,6 +450,130 @@ class GeminiLectureService(private val context: Context) {
         } catch (_: Exception) {
             0L
         }
+    }
+
+    fun extractYouTubeVideoId(url: String): String? {
+        if (url.isBlank()) return null
+        return try {
+            val pattern = Regex("""(?:youtu\.be/|youtube\.com/(?:embed/|v/|watch\?v=|watch\?.+&v=|shorts/))([a-zA-Z0-9_-]{11})""")
+            val match = pattern.find(url)
+            match?.groupValues?.getOrNull(1)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun getYouTubeThumbnailUrl(url: String): String? {
+        val videoId = extractYouTubeVideoId(url) ?: return null
+        return "https://img.youtube.com/vi/$videoId/hqdefault.jpg"
+    }
+
+    suspend fun askQuestionAboutLecture(
+        lecture: LectureNote,
+        conversationHistory: List<LectureChatMessage>,
+        question: String,
+        customApiKey: String? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val apiKey = getActiveApiKey(customApiKey)
+        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
+            return@withContext Result.failure(
+                IllegalStateException("Gemini API key is not configured. Please enter your API key in settings.")
+            )
+        }
+
+        val contextInstruction = buildString {
+            appendLine("You are an elite academic AI tutor dedicated to helping a student understand this specific lecture.")
+            appendLine("Use the lecture context below as your primary source of truth. Answer clearly, pedagogically, and concisely.")
+            appendLine("Explain formulas or concepts in human-readable terms. If relevant, refer to specific timestamps or topics in this lecture.")
+            appendLine("\n--- LECTURE CONTEXT ---")
+            appendLine("Title: ${lecture.title}")
+            appendLine("Source: ${lecture.sourceType}")
+            appendLine("Duration: ${lecture.videoDurationFormatted}")
+            appendLine("\nExecutive Summary:\n${lecture.summary}")
+
+            val concepts = lecture.getKeyConcepts()
+            if (concepts.isNotEmpty()) {
+                appendLine("\nKey Concepts:")
+                concepts.forEach { appendLine("• $it") }
+            }
+
+            val formulas = lecture.getFormulas()
+            if (formulas.isNotEmpty()) {
+                appendLine("\nFormulas in this Lecture:")
+                formulas.forEach { appendLine("• ${it.name}: ${it.latex} — ${it.explanation}") }
+            }
+
+            val diagrams = lecture.getDiagrams()
+            if (diagrams.isNotEmpty()) {
+                appendLine("\nDiagrams & Flowcharts in this Lecture:")
+                diagrams.forEach { appendLine("• [${it.timestamp}] ${it.label} (${it.diagramType}): ${it.description}") }
+            }
+
+            val timestamps = lecture.getTimestamps()
+            if (timestamps.isNotEmpty()) {
+                appendLine("\nTimeline Timestamps:")
+                timestamps.forEach { appendLine("• [${it.time}] ${it.topic}") }
+            }
+            appendLine("--- END CONTEXT ---")
+        }
+
+        val models = listOf("gemini-3.6-flash", "gemini-3.5-flash-lite")
+        var lastError: Exception? = null
+
+        for (model in models) {
+            try {
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+
+                val root = JSONObject()
+                val sysInst = JSONObject().put("parts", JSONArray().put(JSONObject().put("text", contextInstruction)))
+                root.put("system_instruction", sysInst)
+
+                val contents = JSONArray()
+                val recentHistory = conversationHistory.takeLast(6)
+                for (msg in recentHistory) {
+                    val role = if (msg.sender == "USER") "user" else "model"
+                    contents.put(
+                        JSONObject()
+                            .put("role", role)
+                            .put("parts", JSONArray().put(JSONObject().put("text", msg.messageText)))
+                    )
+                }
+
+                contents.put(
+                    JSONObject()
+                        .put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", question)))
+                )
+                root.put("contents", contents)
+
+                val requestBody = root.toString().toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .build()
+
+                val response = okHttpClient.newCall(request).execute()
+                val bodyString = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    val errorMsg = "Gemini API error ($model): ${response.code} $bodyString"
+                    lastError = Exception(errorMsg)
+                    if (response.code == 503 || response.code == 429 || response.code == 404) continue
+                    return@withContext Result.failure(lastError)
+                }
+
+                val respJson = JSONObject(bodyString)
+                val candidates = respJson.optJSONArray("candidates")
+                val candidate = candidates?.optJSONObject(0)
+                val content = candidate?.optJSONObject("content")
+                val parts = content?.optJSONArray("parts")
+                val answerText = parts?.optJSONObject(0)?.optString("text") ?: "I could not generate an answer."
+
+                return@withContext Result.success(answerText)
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        Result.failure(lastError ?: Exception("Failed to get answer from AI tutor."))
     }
 
     private fun getActiveApiKey(customKey: String?): String {

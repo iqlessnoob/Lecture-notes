@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.db.AppDatabase
 import com.example.data.model.GeneratedLectureResult
+import com.example.data.model.LectureChatMessage
 import com.example.data.model.LectureNote
 import com.example.data.model.SubjectSlot
 import com.example.data.repository.LectureRepository
@@ -14,6 +15,7 @@ import com.example.service.GeminiLectureService
 import com.example.service.PdfExportService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -30,7 +33,7 @@ import kotlinx.coroutines.withContext
 class LectureViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
-    private val repository = LectureRepository(db.subjectDao(), db.lectureDao())
+    private val repository = LectureRepository(db.subjectDao(), db.lectureDao(), db.chatMessageDao())
     private val geminiService = GeminiLectureService(application)
     private val pdfExportService = PdfExportService(application)
     private val prefs = application.getSharedPreferences("lecturescribe_prefs", Context.MODE_PRIVATE)
@@ -214,6 +217,68 @@ class LectureViewModel(application: Application) : AndroidViewModel(application)
                 _uiEventMessage.emit(err)
             }
             _isProcessing.value = false
+        }
+    }
+
+    private val _isAiAnsweringChat = MutableStateFlow(false)
+    val isAiAnsweringChat: StateFlow<Boolean> = _isAiAnsweringChat.asStateFlow()
+
+    fun getChatMessagesForLecture(lectureId: Long): Flow<List<LectureChatMessage>> {
+        return repository.getChatMessages(lectureId)
+    }
+
+    fun sendLectureChatMessage(lecture: LectureNote, question: String) {
+        val trimmed = question.trim()
+        if (trimmed.isBlank() || _isAiAnsweringChat.value) return
+
+        viewModelScope.launch {
+            // 1. Insert user question
+            repository.insertChatMessage(
+                lectureId = lecture.id,
+                sender = "USER",
+                text = trimmed
+            )
+
+            // 2. Fetch recent history
+            val history = try {
+                repository.getChatMessages(lecture.id).first()
+            } catch (_: Exception) {
+                emptyList()
+            }
+
+            _isAiAnsweringChat.value = true
+
+            // 3. Ask Gemini
+            val result = geminiService.askQuestionAboutLecture(
+                lecture = lecture,
+                conversationHistory = history,
+                question = trimmed,
+                customApiKey = _customApiKey.value
+            )
+
+            if (result.isSuccess) {
+                val aiAnswer = result.getOrThrow()
+                repository.insertChatMessage(
+                    lectureId = lecture.id,
+                    sender = "AI",
+                    text = aiAnswer
+                )
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Unable to answer at the moment."
+                repository.insertChatMessage(
+                    lectureId = lecture.id,
+                    sender = "AI",
+                    text = "Sorry, I couldn't process your question: $err"
+                )
+            }
+            _isAiAnsweringChat.value = false
+        }
+    }
+
+    fun clearLectureChat(lectureId: Long) {
+        viewModelScope.launch {
+            repository.clearChatMessages(lectureId)
+            _uiEventMessage.emit("Chat history cleared")
         }
     }
 

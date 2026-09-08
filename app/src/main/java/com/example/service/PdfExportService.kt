@@ -2,16 +2,20 @@ package com.example.service
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import android.os.Environment
 import androidx.core.content.FileProvider
 import com.example.data.model.LectureNote
 import com.example.data.model.SubjectSlot
+import com.example.util.LatexToHumanConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -178,6 +182,54 @@ class PdfExportService(private val context: Context) {
             canvas.drawText(titleLines, margin, yCursor, titlePaint)
             yCursor += 24
 
+            val humanMathPaint = Paint().apply {
+                color = Color.parseColor("#0D47A1")
+                textSize = 12f
+                typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                isAntiAlias = true
+            }
+
+            val diagramNodeBgPaint = Paint().apply {
+                color = Color.parseColor("#E8EAF6")
+                style = Paint.Style.FILL
+            }
+
+            val diagramNodeBorderPaint = Paint().apply {
+                color = Color.parseColor("#3F51B5")
+                style = Paint.Style.STROKE
+                strokeWidth = 1.2f
+            }
+
+            val diagramNodeTextPaint = Paint().apply {
+                color = Color.parseColor("#1A237E")
+                textSize = 9f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+                isAntiAlias = true
+            }
+
+            val arrowPaint = Paint().apply {
+                color = Color.parseColor("#3F51B5")
+                strokeWidth = 1.5f
+                isAntiAlias = true
+            }
+
+            fun extractDiagramNodes(mermaidCode: String): List<String> {
+                if (mermaidCode.isBlank()) return emptyList()
+                val nodes = mutableListOf<String>()
+                val regex = Regex("""\[(.*?)\]|\((.*?)\)""")
+                for (line in mermaidCode.lines()) {
+                    val matches = regex.findAll(line)
+                    for (match in matches) {
+                        val label = (match.groups[1]?.value ?: match.groups[2]?.value)?.trim()
+                        if (!label.isNullOrBlank() && !nodes.contains(label)) {
+                            nodes.add(label)
+                        }
+                    }
+                }
+                return nodes
+            }
+
             // Divider
             val dividerPaint = Paint().apply {
                 color = Color.parseColor("#1A237E")
@@ -186,24 +238,22 @@ class PdfExportService(private val context: Context) {
             canvas.drawLine(margin, yCursor, margin + contentWidth, yCursor, dividerPaint)
             yCursor += 20
 
+            var sectionIndex = 1
+
             // SECTION 1: Summary
             checkNewPage(40f)
-            canvas.drawText("1. Executive Lecture Summary", margin, yCursor, sectionHeaderPaint)
+            canvas.drawText("${sectionIndex++}. Executive Lecture Summary", margin, yCursor, sectionHeaderPaint)
             yCursor += 16
 
-            val summaryCardPaint = Paint().apply {
-                color = Color.parseColor("#F1F8E9")
-                style = Paint.Style.FILL
-            }
-            // Estimate summary box
-            drawWrappedText(lecture.summary, bodyPaint, contentWidth)
+            val cleanSummary = LatexToHumanConverter.cleanMarkdownAndMath(lecture.summary)
+            drawWrappedText(cleanSummary, bodyPaint, contentWidth)
             yCursor += 16
 
             // SECTION 2: Key Concepts
             val concepts = lecture.getKeyConcepts()
             if (concepts.isNotEmpty()) {
                 checkNewPage(40f)
-                canvas.drawText("2. Core Concepts & Takeaways", margin, yCursor, sectionHeaderPaint)
+                canvas.drawText("${sectionIndex++}. Core Concepts & Takeaways", margin, yCursor, sectionHeaderPaint)
                 yCursor += 16
 
                 val bulletPaint = Paint().apply {
@@ -212,19 +262,20 @@ class PdfExportService(private val context: Context) {
                 }
 
                 for (concept in concepts) {
+                    val cleanConcept = LatexToHumanConverter.cleanMarkdownAndMath(concept)
                     checkNewPage(24f)
                     canvas.drawCircle(margin + 6, yCursor - 4, 3f, bulletPaint)
 
-                    val words = concept.split(" ")
+                    val words = cleanConcept.split(" ")
                     var currentLine = ""
                     var isFirstLine = true
                     for (word in words) {
                         val testLine = if (currentLine.isEmpty()) word else "$currentLine $word"
                         val testWidth = bodyPaint.measureText(testLine)
-                        val lineMax = if (isFirstLine) contentWidth - 18 else contentWidth - 18
+                        val lineMax = contentWidth - 18
                         if (testWidth > lineMax && currentLine.isNotEmpty()) {
                             checkNewPage(14f)
-                            canvas.drawText(currentLine, if (isFirstLine) margin + 18 else margin + 18, yCursor, bodyPaint)
+                            canvas.drawText(currentLine, margin + 18, yCursor, bodyPaint)
                             yCursor += 14f
                             currentLine = word
                             isFirstLine = false
@@ -234,80 +285,193 @@ class PdfExportService(private val context: Context) {
                     }
                     if (currentLine.isNotEmpty()) {
                         checkNewPage(14f)
-                        canvas.drawText(currentLine, if (isFirstLine) margin + 18 else margin + 18, yCursor, bodyPaint)
+                        canvas.drawText(currentLine, margin + 18, yCursor, bodyPaint)
                         yCursor += 16f
                     }
                 }
                 yCursor += 8
             }
 
-            // SECTION 3: Formulas (with LaTeX notation)
-            val formulas = lecture.getFormulas()
+            // SECTION 3: Formulas (Human-Readable Form)
+            val formulas = lecture.getFormulas().filter { it.latex.isNotBlank() && it.name.isNotBlank() }
             if (formulas.isNotEmpty()) {
                 checkNewPage(40f)
-                canvas.drawText("3. Formulas & Quantitative Models", margin, yCursor, sectionHeaderPaint)
+                canvas.drawText("${sectionIndex++}. Formulas & Quantitative Models", margin, yCursor, sectionHeaderPaint)
                 yCursor += 16
 
                 for (formula in formulas) {
-                    checkNewPage(65f)
-                    val boxTop = yCursor - 4
-                    canvas.drawRect(margin, boxTop, margin + contentWidth, boxTop + 54, formulaBoxPaint)
-                    canvas.drawRect(margin, boxTop, margin + contentWidth, boxTop + 54, formulaBorderPaint)
+                    val humanEq = LatexToHumanConverter.convert(formula.latex)
+                    val cleanExplanation = LatexToHumanConverter.cleanMarkdownAndMath(formula.explanation)
 
-                    canvas.drawText("Formula: ${formula.name}", margin + 10, yCursor + 12, boldBodyPaint)
-                    canvas.drawText("LaTeX: ${formula.latex}", margin + 10, yCursor + 28, latexFontPaint)
-                    canvas.drawText(formula.explanation, margin + 10, yCursor + 44, bodyPaint)
-                    yCursor += 66
+                    // Wrap explanation lines
+                    val expLines = mutableListOf<String>()
+                    val expWords = cleanExplanation.split(" ")
+                    var curLine = ""
+                    for (w in expWords) {
+                        val test = if (curLine.isEmpty()) w else "$curLine $w"
+                        if (bodyPaint.measureText(test) > contentWidth - 24) {
+                            expLines.add(curLine)
+                            curLine = w
+                        } else {
+                            curLine = test
+                        }
+                    }
+                    if (curLine.isNotEmpty()) expLines.add(curLine)
+
+                    val boxHeight = 44f + (expLines.size.coerceAtLeast(1) * 14f)
+                    checkNewPage(boxHeight + 12f)
+
+                    val boxTop = yCursor - 2
+                    val boxRect = RectF(margin, boxTop, margin + contentWidth, boxTop + boxHeight)
+                    canvas.drawRoundRect(boxRect, 6f, 6f, formulaBoxPaint)
+                    canvas.drawRoundRect(boxRect, 6f, 6f, formulaBorderPaint)
+
+                    // Formula Name
+                    canvas.drawText("Formula: ${formula.name}", margin + 12, yCursor + 13, boldBodyPaint)
+
+                    // Human-Readable Equation (No LaTeX code!)
+                    canvas.drawText("Equation:  $humanEq", margin + 12, yCursor + 30, humanMathPaint)
+
+                    // Explanation
+                    var expY = yCursor + 44
+                    for (line in expLines) {
+                        canvas.drawText(line, margin + 12, expY, bodyPaint)
+                        expY += 14f
+                    }
+
+                    yCursor += boxHeight + 12
                 }
                 yCursor += 8
             }
 
-            // SECTION 4: Recreated Diagrams
-            val diagrams = lecture.getDiagrams()
+            // SECTION 4: Diagrams & Flowcharts (with Visual Flowchart and Keyframe)
+            val diagrams = lecture.getDiagrams().filter { it.label.isNotBlank() && (it.description.isNotBlank() || it.mermaidCode.isNotBlank()) }
             if (diagrams.isNotEmpty()) {
                 checkNewPage(40f)
-                canvas.drawText("4. Recreated Digital Diagrams & Models", margin, yCursor, sectionHeaderPaint)
+                canvas.drawText("${sectionIndex++}. Diagrams & Visual Models", margin, yCursor, sectionHeaderPaint)
                 yCursor += 16
 
                 for (diagram in diagrams) {
-                    checkNewPage(70f)
-                    val boxTop = yCursor - 4
-                    val boxHeight = if (diagram.mermaidCode.isNotBlank()) 90f else 60f
-                    canvas.drawRect(margin, boxTop, margin + contentWidth, boxTop + boxHeight, formulaBoxPaint)
-                    canvas.drawRect(margin, boxTop, margin + contentWidth, boxTop + boxHeight, formulaBorderPaint)
+                    val nodes = extractDiagramNodes(diagram.mermaidCode)
+                    val hasVisualFlow = nodes.size in 2..6
 
+                    // Try to extract frame if upload
+                    var frameBitmap: Bitmap? = null
+                    if (lecture.sourceType == "UPLOAD" && lecture.sourceUri.isNotBlank()) {
+                        try {
+                            frameBitmap = GeminiLectureService(context).extractFrameAtTimestamp(Uri.parse(lecture.sourceUri), diagram.timestamp)
+                        } catch (_: Exception) {}
+                    }
+
+                    val descClean = LatexToHumanConverter.cleanMarkdownAndMath(diagram.description)
+                    val descLines = mutableListOf<String>()
+                    val descWords = descClean.split(" ")
+                    var dCur = ""
+                    for (w in descWords) {
+                        val test = if (dCur.isEmpty()) w else "$dCur $w"
+                        if (bodyPaint.measureText(test) > contentWidth - 24) {
+                            descLines.add(dCur)
+                            dCur = w
+                        } else {
+                            dCur = test
+                        }
+                    }
+                    if (dCur.isNotEmpty()) descLines.add(dCur)
+
+                    var extraHeight = 0f
+                    if (hasVisualFlow) extraHeight += 50f
+                    if (frameBitmap != null) extraHeight += 120f
+
+                    val boxHeight = 36f + (descLines.size * 14f) + extraHeight
+                    checkNewPage(boxHeight + 14f)
+
+                    val boxTop = yCursor - 2
+                    val boxRect = RectF(margin, boxTop, margin + contentWidth, boxTop + boxHeight)
+                    canvas.drawRoundRect(boxRect, 6f, 6f, formulaBoxPaint)
+                    canvas.drawRoundRect(boxRect, 6f, 6f, formulaBorderPaint)
+
+                    // Header
                     canvas.drawText(
                         "${diagram.label} [${diagram.diagramType.uppercase()}] • Timestamp: ${diagram.timestamp}",
-                        margin + 10,
-                        yCursor + 12,
+                        margin + 12,
+                        yCursor + 13,
                         boldBodyPaint
                     )
 
-                    // Draw description
-                    val descWords = diagram.description.split(" ")
-                    var descLine = ""
-                    var descY = yCursor + 26
-                    for (w in descWords) {
-                        val test = if (descLine.isEmpty()) w else "$descLine $w"
-                        if (bodyPaint.measureText(test) > contentWidth - 20) {
-                            canvas.drawText(descLine, margin + 10, descY, bodyPaint)
-                            descY += 12f
-                            descLine = w
+                    var innerY = yCursor + 28
+                    for (dLine in descLines) {
+                        canvas.drawText(dLine, margin + 12, innerY, bodyPaint)
+                        innerY += 14f
+                    }
+                    innerY += 4f
+
+                    // Draw actual visual flowchart if nodes exist
+                    if (hasVisualFlow) {
+                        val nodeCount = nodes.size
+                        if (nodeCount in 2..4) {
+                            // Horizontal flow
+                            val arrowGap = 18f
+                            val totalGaps = (nodeCount - 1) * arrowGap
+                            val nodeW = (contentWidth - 24 - totalGaps) / nodeCount
+                            val nodeH = 26f
+                            var nodeX = margin + 12
+
+                            for (i in 0 until nodeCount) {
+                                val nRect = RectF(nodeX, innerY, nodeX + nodeW, innerY + nodeH)
+                                canvas.drawRoundRect(nRect, 4f, 4f, diagramNodeBgPaint)
+                                canvas.drawRoundRect(nRect, 4f, 4f, diagramNodeBorderPaint)
+
+                                val labelText = nodes[i].take(18)
+                                canvas.drawText(labelText, nRect.centerX(), innerY + 16, diagramNodeTextPaint)
+
+                                if (i < nodeCount - 1) {
+                                    val arrowStartX = nodeX + nodeW + 2
+                                    val arrowEndX = arrowStartX + arrowGap - 4
+                                    val arrowY = innerY + (nodeH / 2)
+                                    canvas.drawLine(arrowStartX, arrowY, arrowEndX, arrowY, arrowPaint)
+                                    canvas.drawLine(arrowEndX - 4, arrowY - 3, arrowEndX, arrowY, arrowPaint)
+                                    canvas.drawLine(arrowEndX - 4, arrowY + 3, arrowEndX, arrowY, arrowPaint)
+                                }
+                                nodeX += nodeW + arrowGap
+                            }
                         } else {
-                            descLine = test
+                            // Compact sequence badges
+                            var badgeX = margin + 12
+                            for (i in 0 until nodeCount) {
+                                val badgeText = "${i + 1}. ${nodes[i]}"
+                                val bWidth = diagramNodeTextPaint.measureText(badgeText) + 16
+                                if (badgeX + bWidth > margin + contentWidth - 12) {
+                                    badgeX = margin + 12
+                                    innerY += 28f
+                                }
+                                val bRect = RectF(badgeX, innerY, badgeX + bWidth, innerY + 22f)
+                                canvas.drawRoundRect(bRect, 4f, 4f, diagramNodeBgPaint)
+                                canvas.drawRoundRect(bRect, 4f, 4f, diagramNodeBorderPaint)
+                                canvas.drawText(badgeText, bRect.centerX(), innerY + 14, diagramNodeTextPaint)
+                                badgeX += bWidth + 8
+                            }
                         }
-                    }
-                    if (descLine.isNotEmpty()) {
-                        canvas.drawText(descLine, margin + 10, descY, bodyPaint)
-                        descY += 14f
+                        innerY += 34f
                     }
 
-                    if (diagram.mermaidCode.isNotBlank()) {
-                        val firstMermaidLine = diagram.mermaidCode.lines().firstOrNull { it.isNotBlank() } ?: "Mermaid.js Flowchart"
-                        canvas.drawText("Mermaid Spec: $firstMermaidLine", margin + 10, descY + 2, latexFontPaint)
+                    // Draw video keyframe if available
+                    if (frameBitmap != null) {
+                        try {
+                            val targetW = 180
+                            val targetH = 101 // 16:9 approx
+                            val scaledFrame = Bitmap.createScaledBitmap(frameBitmap, targetW, targetH, true)
+                            canvas.drawBitmap(scaledFrame, margin + 14, innerY, null)
+                            val frameCaptionPaint = Paint().apply {
+                                color = Color.parseColor("#37474F")
+                                textSize = 8.5f
+                                typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+                                isAntiAlias = true
+                            }
+                            canvas.drawText("Video frame at ${diagram.timestamp}", margin + 14, innerY + targetH + 11, frameCaptionPaint)
+                        } catch (_: Exception) {}
                     }
 
-                    yCursor += boxHeight + 14
+                    yCursor += boxHeight + 12
                 }
                 yCursor += 8
             }
@@ -316,7 +480,7 @@ class PdfExportService(private val context: Context) {
             val timestamps = lecture.getTimestamps()
             if (timestamps.isNotEmpty()) {
                 checkNewPage(40f)
-                canvas.drawText("5. Topic Changes & Video Timeline", margin, yCursor, sectionHeaderPaint)
+                canvas.drawText("${sectionIndex++}. Topic Changes & Video Timeline", margin, yCursor, sectionHeaderPaint)
                 yCursor += 16
 
                 for (ts in timestamps) {

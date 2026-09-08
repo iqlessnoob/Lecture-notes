@@ -1,10 +1,12 @@
 package com.example.data.repository
 
+import com.example.data.db.ChatMessageDao
 import com.example.data.db.LectureDao
 import com.example.data.db.SubjectDao
 import com.example.data.model.DiagramItem
 import com.example.data.model.FormulaItem
 import com.example.data.model.GeneratedLectureResult
+import com.example.data.model.LectureChatMessage
 import com.example.data.model.LectureNote
 import com.example.data.model.SubjectSlot
 import com.example.data.model.TimestampMarker
@@ -15,12 +17,35 @@ import kotlinx.coroutines.withContext
 
 class LectureRepository(
     private val subjectDao: SubjectDao,
-    private val lectureDao: LectureDao
+    private val lectureDao: LectureDao,
+    private val chatMessageDao: ChatMessageDao? = null
 ) {
     val allSlots: Flow<List<SubjectSlot>> = subjectDao.getAllSlots()
 
     fun getLecturesForSlot(slotId: Long): Flow<List<LectureNote>> {
         return lectureDao.getLecturesForSlot(slotId)
+    }
+
+    fun getChatMessages(lectureId: Long): Flow<List<LectureChatMessage>> {
+        return chatMessageDao?.getMessagesForLecture(lectureId) ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    }
+
+    suspend fun insertChatMessage(lectureId: Long, sender: String, text: String): Long {
+        return withContext(Dispatchers.IO) {
+            chatMessageDao?.insertMessage(
+                LectureChatMessage(
+                    lectureId = lectureId,
+                    sender = sender,
+                    messageText = text.trim()
+                )
+            ) ?: 0L
+        }
+    }
+
+    suspend fun clearChatMessages(lectureId: Long) {
+        withContext(Dispatchers.IO) {
+            chatMessageDao?.deleteMessagesForLecture(lectureId)
+        }
     }
 
     suspend fun createSlot(name: String, description: String = "", colorHex: String = "#1A237E"): Long {
